@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scorebook Broadcast Overlay v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;700;800&family=Barlow:wght@500;600&display=swap" rel="stylesheet">
+<style>
+/*
+  HOW THIS PAGE IS MEANT TO BE USED
+  - Open it in the same browser as the scorebook (a second window).
+  - In OBS: Window Capture of this window, then add a Chroma Key filter.
+  - URL options (add after the file name):
+      ?bg=green        solid chroma-key green (default)
+      ?bg=transparent  for use as an OBS Browser Source later
+      ?bg=dark         neutral grey, handy for previewing
+      ?order=wr        show wickets first, e.g. 3/84 instead of 84/3
+      ?test=1          show the test panel with sample match situations
+
+  DESIGN NOTES (chroma-key safe)
+  - No green or teal in the palette, so nothing gets keyed out by accident.
+  - Every element sits on a solid panel: no shadows, no semi-transparent
+    edges against the background, which is what causes green fringing.
+*/
+:root {
+  --ink: #0f1b2d;
+  --ink2: #1a2b44;
+  --paper: #f6f2e9;
+  --amber: #ffb000;
+  --coral: #ff5a4e;
+  --slate: #9fb2c8;
+  --key: #00b140;
+  --cond: 'Barlow Condensed', 'Arial Narrow', 'Helvetica Neue', Arial, sans-serif;
+  --body: 'Barlow', 'Helvetica Neue', Arial, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: max(1vw, 8px); height: 100%; }
+body {
+  height: 100%; overflow: hidden; position: relative;
+  background: var(--key); color: var(--paper); font-family: var(--body);
+}
+body.bg-transparent { background: transparent; }
+body.bg-dark { background: #2b2f36; }
+.hidden { display: none !important; }
+
+/* ---------- the strip ---------- */
+#strip {
+  position: absolute; left: 2.4rem; bottom: 2.4rem; width: 64rem;
+  border-radius: 0; overflow: hidden; background: var(--ink);
+  will-change: transform; /* keeps text smoothing greyscale: coloured sub-pixel edges on dark-on-amber text can be keyed out as green fringes */
+}
+#freeHit {
+  background: var(--paper); color: var(--ink);
+  font: 800 1.3rem/1 var(--cond); letter-spacing: .04em;
+  padding: .45rem 1.6rem;
+}
+#main { display: flex; height: 5.8rem; }
+#team {
+  flex: 1 1 0; min-width: 0; padding: 0 1.4rem;
+  border-left: .5rem solid var(--amber);
+  display: flex; flex-direction: column; justify-content: center; gap: .25rem;
+}
+#teamName {
+  font: 700 2.5rem/1 var(--cond);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#teamSub { font: 500 1.15rem/1 var(--body); color: var(--slate); }
+#score {
+  flex: 0 0 auto; min-width: 12rem; padding: 0 1.6rem;
+  background: var(--amber); color: var(--ink);
+  display: flex; align-items: center; justify-content: center;
+  font: 800 4.6rem/1 var(--cond);
+}
+#score .sep { font-weight: 500; font-size: 3.4rem; margin: 0 .25rem; color: #5b4a1d; }
+#score.flash { animation: wicketFlash 1.5s ease-out 1; }
+@keyframes wicketFlash {
+  0%, 55% { background: var(--coral); color: #fff; }
+  100% { background: var(--amber); color: var(--ink); }
+}
+#overs {
+  flex: 0 0 auto; min-width: 8.6rem; padding: 0 1.3rem; background: var(--ink2);
+  display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .2rem;
+}
+#oversNum { font: 700 2.5rem/1 var(--cond); }
+#oversOf { font: 500 1.1rem/1 var(--body); color: var(--slate); }
+#chase {
+  flex: 0 0 auto; min-width: 15rem; max-width: 25rem; padding: 0 1.4rem;
+  display: flex; flex-direction: column; justify-content: center; gap: .3rem;
+}
+#chase1 { font: 700 1.65rem/1.05 var(--cond); white-space: nowrap; }
+#chase2 { font: 500 1.15rem/1.1 var(--body); color: var(--slate); white-space: nowrap; }
+
+#detail {
+  display: flex; align-items: center; height: 3.6rem;
+  background: var(--ink2); border-top: .15rem solid var(--ink);
+  font: 600 1.4rem/1 var(--body);
+}
+.who { display: flex; align-items: baseline; gap: .5rem; padding: 0 1.2rem; flex: 0 1 auto; min-width: 0; white-space: nowrap; }
+.who .nm { overflow: hidden; text-overflow: ellipsis; max-width: 10rem; flex: 0 1 auto; }
+.who .fg, .who .bl { flex: 0 0 auto; }
+.who .fg { font: 700 1.55rem/1 var(--cond); }
+.who .bl { color: var(--slate); font-weight: 500; font-size: 1.15rem; }
+#striker .nm::before {
+  content: ""; display: inline-block; width: .7rem; height: .7rem; margin-right: .55rem;
+  background: var(--amber); transform: rotate(45deg); vertical-align: .05rem;
+}
+#bowler { border-left: .15rem solid var(--ink); margin-left: auto; }
+#over { display: flex; flex: 0 0 auto; align-items: center; gap: .7rem; padding: 0 1.2rem; border-left: .15rem solid var(--ink); height: 100%; }
+#overLabel { font: 500 1.1rem/1 var(--body); color: var(--slate); white-space: nowrap; }
+#pips { display: flex; gap: .35rem; align-items: center; min-width: 13.5rem; }
+.pip {
+  min-width: 2.1rem; height: 2.1rem; padding: 0 .35rem; border-radius: 1.1rem;
+  display: flex; align-items: center; justify-content: center;
+  font: 700 1.2rem/1 var(--cond); background: #2b4262; color: var(--paper);
+}
+.pip.dot { color: var(--slate); }
+.pip.four { background: var(--ink); box-shadow: inset 0 0 0 .14rem var(--amber); color: var(--amber); }
+.pip.six { background: var(--amber); color: var(--ink); }
+.pip.w { background: var(--coral); color: #fff; }
+.pip.ex { background: var(--ink); color: var(--slate); font-size: 1.05rem; }
+#pips.last .pip { opacity: .55; }
+
+/* ---------- full cards: innings break / result ---------- */
+#card {
+  position: absolute; left: 2.4rem; bottom: 2.4rem; width: 64rem;
+  border-radius: 0; overflow: hidden; background: var(--ink);
+  will-change: transform;
+}
+#cardHead {
+  padding: 1.1rem 1.8rem; background: var(--amber); color: var(--ink);
+  font: 800 3rem/1.05 var(--cond);
+}
+.crow {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 1.5rem;
+  padding: .9rem 1.8rem; border-top: .15rem solid var(--ink2);
+}
+.crow .ct { font: 700 2.1rem/1 var(--cond); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.crow .cs { font: 800 2.4rem/1 var(--cond); white-space: nowrap; }
+.crow .cs small { font: 500 1.2rem/1 var(--body); color: var(--slate); margin-left: .5rem; }
+#cardNote { padding: .9rem 1.8rem 1.1rem; border-top: .15rem solid var(--ink2); font: 600 1.45rem/1.2 var(--body); color: var(--slate); }
+
+/* ---------- waiting / error message ---------- */
+#msg {
+  position: absolute; left: 2.4rem; bottom: 2.4rem; max-width: 46rem;
+  background: var(--ink); color: var(--paper); border-radius: .4rem;
+  padding: .9rem 1.5rem; font: 600 1.4rem/1.25 var(--body);
+}
+
+/* ---------- test panel (only with ?test=1) ---------- */
+#test {
+  position: fixed; top: 12px; right: 12px; width: 300px; max-height: calc(100% - 24px); overflow: auto;
+  background: #fff; color: #1a202c; border-radius: 8px; padding: 12px;
+  font: 500 13px/1.35 Arial, sans-serif; z-index: 10;
+}
+#test h2 { font-size: 14px; margin-bottom: 8px; }
+#test button {
+  display: block; width: 100%; margin: 0 0 5px; padding: 7px 9px; text-align: left;
+  border: 1px solid #cbd5e0; background: #f7fafc; border-radius: 5px; font: inherit; cursor: pointer;
+}
+#test button:hover { background: #edf2f7; }
+#test button.primary { background: #2b6cb0; color: #fff; border-color: #2b6cb0; text-align: center; }
+#test textarea { width: 100%; height: 70px; margin: 6px 0; font: 11px monospace; }
+#test .info { margin: 8px 0; color: #4a5568; }
+
+@media (prefers-reduced-motion: reduce) {
+  #score.flash { animation: none; background: var(--coral); color: #fff; }
+}
+</style>
+</head>
+<body>
+
+<div id="strip" class="hidden">
+  <div id="freeHit" class="hidden">FREE HIT: only a run out can dismiss the batter</div>
+  <div id="main">
+    <div id="team">
+      <div id="teamName"></div>
+      <div id="teamSub"></div>
+    </div>
+    <div id="score"><span id="sA"></span><span class="sep">/</span><span id="sB"></span></div>
+    <div id="overs"><div id="oversNum"></div><div id="oversOf"></div></div>
+    <div id="chase"><div id="chase1"></div><div id="chase2"></div></div>
+  </div>
+  <div id="detail">
+    <div class="who" id="striker"><span class="nm"></span><span class="fg"></span><span class="bl"></span></div>
+    <div class="who" id="nonStriker"><span class="nm"></span><span class="fg"></span><span class="bl"></span></div>
+    <div class="who" id="bowler"><span class="nm"></span><span class="fg"></span><span class="bl"></span></div>
+    <div id="over"><span id="overLabel">This over</span><div id="pips"></div></div>
+  </div>
+</div>
+
+<div id="card" class="hidden">
+  <div id="cardHead"></div>
+  <div id="cardRows"></div>
+  <div id="cardNote" class="hidden"></div>
+</div>
+
+<div id="msg">Waiting for scorebook…</div>
+
+<aside id="test" class="hidden">
+  <h2>Overlay test panel</h2>
+  <div id="samples"></div>
+  <div class="info" id="feedInfo"></div>
+  <button id="follow" class="primary">Follow the scorebook</button>
+  <textarea id="paste" placeholder="Paste a snapshot JSON here"></textarea>
+  <button id="applyPaste">Show pasted snapshot</button>
+</aside>
+
+<script>
+(() => {
+'use strict';
+
+const KEY = 'scorebook_broadcast_snapshot';   // localStorage key the scorebook writes to
+const CHANNEL = 'scorebook_broadcast';        // BroadcastChannel name (faster path, same browser)
+const SUPPORTED_SCHEMA = 1;
+const STALE_MS = 6 * 60 * 60 * 1000;          // ignore snapshots older than 6 hours
+
+const params = new URLSearchParams(location.search);
+document.body.classList.add('bg-' + (params.get('bg') || 'green'));
+const ORDER_WR = params.get('order') === 'wr';
+const TEST = params.get('test') === '1';
+
+const $ = id => document.getElementById(id);
+const num = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+const str = (v, d = '') => (typeof v === 'string' ? v : d);
+const oversText = b => Math.floor(b / 6) + '.' + (b % 6);
+
+let holdLive = false;     // true while the test panel is showing a sample
+let lastRaw = null;       // last raw snapshot string rendered (skip duplicates)
+let prev = null;          // previous normalised snapshot (for wicket flash)
+let prevOver = null;      // last non-empty "this over" (to keep the final ball visible)
+let prevInnings = null;
+
+// ---------- reading + validating a snapshot ----------
+function normalise(raw) {
+  let o;
+  try { o = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { return { ok: false, message: 'The scorebook sent data this overlay cannot read.' }; }
+  if (!o || typeof o !== 'object' || typeof o.schema !== 'number') return { ok: false, message: 'The scorebook sent data this overlay cannot read.' };
+  if (o.schema > SUPPORTED_SCHEMA) return { ok: false, message: 'The scorebook is newer than this overlay. Update the overlay file.' };
+
+  const player = p => (p && typeof p === 'object') ? { name: str(p.name, '-'), runs: num(p.runs), balls: num(p.balls) } : null;
+  const bowler = p => (p && typeof p === 'object') ? { name: str(p.name, '-'), wickets: num(p.wickets), runs: num(p.runs), balls: num(p.balls) } : null;
+  const fi = o.firstInnings && typeof o.firstInnings === 'object'
+    ? { team: str(o.firstInnings.team, ''), runs: num(o.firstInnings.runs), wickets: num(o.firstInnings.wickets), balls: num(o.firstInnings.balls) } : null;
+
+  return { ok: true, snap: {
+    status: ['live', 'innings_break', 'complete'].includes(o.status) ? o.status : 'live',
+    innings: num(o.innings, 1) === 2 ? 2 : 1,
+    maxOvers: Math.max(1, num(o.maxOvers, 20)),
+    battingTeam: str(o.battingTeam, 'Batting'),
+    fieldingTeam: str(o.fieldingTeam, 'Fielding'),
+    runs: num(o.runs), wickets: num(o.wickets), balls: num(o.balls),
+    target: o.target == null ? null : num(o.target),
+    striker: player(o.striker), nonStriker: player(o.nonStriker), bowler: bowler(o.bowler),
+    thisOver: Array.isArray(o.thisOver) ? o.thisOver.slice(0, 12).map(String) : [],
+    freeHit: o.freeHit === true,
+    firstInnings: fi,
+    resultText: typeof o.resultText === 'string' ? o.resultText : null,
+    updatedAt: num(o.updatedAt, 0)
+  } };
+}
+
+// ---------- drawing ----------
+function setWho(id, text, figures, extra) {
+  const el = $(id);
+  el.children[0].textContent = text;
+  // A short name keeps its own width; a long name can shrink, but never below ~5 characters.
+  el.children[0].style.minWidth = Math.min(text.length, 5) + 'ch';
+  el.children[1].textContent = figures;
+  el.children[2].textContent = extra;
+}
+function pipClass(sym) {
+  if (sym === '•') return 'dot';
+  if (sym === 'W') return 'w';
+  if (sym === '4') return 'four';
+  if (sym === '6') return 'six';
+  if (/[a-z]/i.test(sym)) return 'ex';
+  return '';
+}
+function showOnly(which) {   // 'strip' | 'card' | 'msg'
+  $('strip').classList.toggle('hidden', which !== 'strip');
+  $('card').classList.toggle('hidden', which !== 'card');
+  $('msg').classList.toggle('hidden', which !== 'msg');
+}
+function message(text) { $('msg').textContent = text; showOnly('msg'); }
+
+function renderStrip(s) {
+  $('teamName').textContent = s.battingTeam;
+  $('teamSub').textContent = s.innings === 1 ? '1st innings' : '2nd innings';
+  $('sA').textContent = ORDER_WR ? s.wickets : s.runs;
+  $('sB').textContent = ORDER_WR ? s.runs : s.wickets;
+  $('oversNum').textContent = oversText(s.balls);
+  $('oversOf').textContent = 'of ' + s.maxOvers;
+
+  const ballsLeft = Math.max(0, s.maxOvers * 6 - s.balls);
+  if (s.innings === 2 && s.target != null) {
+    const need = s.target - s.runs;
+    if (need <= 0) {
+      $('chase1').textContent = 'Target reached';
+      $('chase2').textContent = 'Target ' + s.target;
+    } else {
+      $('chase1').textContent = 'Need ' + need + ' from ' + ballsLeft + (ballsLeft === 1 ? ' ball' : ' balls');
+      const rrr = ballsLeft > 0 ? (need / (ballsLeft / 6)).toFixed(2) : null;
+      $('chase2').textContent = 'Target ' + s.target + (rrr ? ', RRR ' + rrr : '');
+    }
+  } else {
+    const crr = s.balls > 0 ? (s.runs / (s.balls / 6)).toFixed(2) : '0.00';
+    $('chase1').textContent = 'CRR ' + crr;
+    $('chase2').textContent = oversText(ballsLeft) + ' overs left';
+  }
+
+  $('freeHit').classList.toggle('hidden', !s.freeHit);
+
+  const bat = (id, p) => p ? setWho(id, p.name, String(p.runs), '(' + p.balls + ')') : setWho(id, '-', '', '');
+  bat('striker', s.striker); bat('nonStriker', s.nonStriker);
+  if (s.bowler) setWho('bowler', s.bowler.name, s.bowler.wickets + '-' + s.bowler.runs, '(' + oversText(s.bowler.balls) + ')');
+  else setWho('bowler', '-', '', '');
+
+  // Keep the final ball of an over on screen until the next ball is bowled:
+  // the scorebook clears "this over" the moment the 6th ball lands.
+  if (prevInnings !== s.innings) { prevOver = null; }
+  prevInnings = s.innings;
+  let pips = s.thisOver, label = 'This over', isLast = false;
+  if (pips.length > 0) prevOver = pips.slice();
+  else if (prevOver && s.balls > 0 && s.balls % 6 === 0) { pips = prevOver; label = 'Last over'; isLast = true; }
+  $('overLabel').textContent = label;
+  const box = $('pips');
+  box.classList.toggle('last', isLast);
+  box.textContent = '';
+  pips.forEach(sym => {
+    const d = document.createElement('div');
+    d.className = ('pip ' + pipClass(sym)).trim();
+    d.textContent = sym;
+    box.appendChild(d);
+  });
+
+  if (prev && prev.status === 'live' && prev.innings === s.innings && s.wickets > prev.wickets) {
+    const sc = $('score');
+    sc.classList.remove('flash'); void sc.offsetWidth; sc.classList.add('flash');
+  }
+  showOnly('strip');
+}
+
+function cardRow(team, runs, wkts, balls) {
+  const r = document.createElement('div'); r.className = 'crow';
+  const t = document.createElement('span'); t.className = 'ct'; t.textContent = team;
+  const sc = document.createElement('span'); sc.className = 'cs';
+  sc.textContent = runs + '/' + wkts;
+  const sm = document.createElement('small'); sm.textContent = '(' + oversText(balls) + ' ov)';
+  sc.appendChild(sm); r.appendChild(t); r.appendChild(sc);
+  return r;
+}
+function renderCard(s) {
+  const rows = $('cardRows'); rows.textContent = '';
+  const note = $('cardNote');
+  if (s.status === 'innings_break') {
+    $('cardHead').textContent = 'Innings break';
+    if (s.firstInnings) rows.appendChild(cardRow(s.firstInnings.team, s.firstInnings.runs, s.firstInnings.wickets, s.firstInnings.balls));
+    note.textContent = s.target != null ? s.battingTeam + ' need ' + s.target + ' to win from ' + s.maxOvers + ' overs' : '';
+    note.classList.toggle('hidden', s.target == null);
+  } else {
+    $('cardHead').textContent = s.resultText || 'Match complete';
+    if (s.firstInnings) rows.appendChild(cardRow(s.firstInnings.team, s.firstInnings.runs, s.firstInnings.wickets, s.firstInnings.balls));
+    rows.appendChild(cardRow(s.battingTeam, s.runs, s.wickets, s.balls));
+    note.classList.add('hidden');
+  }
+  showOnly('card');
+}
+
+function render(s) {
+  if (s.status === 'live') renderStrip(s); else renderCard(s);
+  prev = s;
+}
+
+// ---------- Go Live relay mode ----------
+// Use ?match=ID&pin=PIN to read the live match from the Go Live relay instead of this browser.
+// This lets the scorer sit on a phone while OBS runs on a laptop. Optional: &every=5 (seconds, min 3).
+// Turns a raw scorebook `match` object into the overlay snapshot (schema 1).
+// Pure function: no DOM, no globals. Used by the scorebook (same-laptop mode)
+// and by the overlay itself (Go Live relay mode).
+function snapshotFromMatch(m) {
+    const team = k => (m.teams && m.teams[k]) || { name: '', players: [] };
+    const bat = team(m.battingTeam), fld = team(m.fieldingTeam);
+    const act = m.active || {};
+    const log = Array.isArray(m.log) ? m.log : [];
+    const complete = !!m.matchCompleteTriggered || log.some(l => l && l.desc === 'END OF MATCH');
+    const atBreak = m.innings === 2 && m.totalLegalBalls === 0 && act.strikerIdx == null && !complete;
+    const status = complete ? 'complete' : (atBreak ? 'innings_break' : 'live');
+
+    const batter = idx => {
+        const p = idx == null ? null : bat.players[idx];
+        return (p && !p.isOut) ? { name: p.name, runs: p.runs || 0, balls: p.balls || 0 } : null;
+    };
+    const bp = act.bowlerIdx == null ? null : fld.players[act.bowlerIdx];
+    const fi = m.firstInnings ? {
+        team: team(m.firstInnings.team).name, runs: m.firstInnings.runs,
+        wickets: m.firstInnings.wickets, balls: m.firstInnings.balls
+    } : null;
+
+    let resultText = null;
+    if (complete && fi) {
+        const maxW = m.maxWickets !== undefined ? m.maxWickets : 10;
+        if (m.runs > fi.runs) { const n = maxW - m.wickets; resultText = bat.name + ' won by ' + n + (n === 1 ? ' wicket' : ' wickets'); }
+        else if (fi.runs > m.runs) { const n = fi.runs - m.runs; resultText = fi.team + ' won by ' + n + (n === 1 ? ' run' : ' runs'); }
+        else resultText = 'Match tied';
+    }
+    return {
+        schema: 1, updatedAt: Date.now(), status,
+        innings: m.innings === 2 ? 2 : 1,
+        maxOvers: m.targetOvers || 20,
+        battingTeam: bat.name, fieldingTeam: fld.name,
+        runs: m.runs || 0, wickets: m.wickets || 0, balls: m.totalLegalBalls || 0,
+        target: m.target == null ? null : m.target,
+        striker: batter(act.strikerIdx), nonStriker: batter(act.nonStrikerIdx),
+        bowler: bp ? { name: bp.name, wickets: bp.bowlWickets || 0, runs: bp.bowlRuns || 0, balls: bp.bowlBalls || 0 } : null,
+        thisOver: (m.currentOverString || []).map(o => String(o && typeof o === 'object' ? o.sym : o)),
+        freeHit: !!(m.enableFreeHit && m.freeHit),
+        firstInnings: fi, resultText
+    };
+}
+
+const RELAY_URL = 'https://script.google.com/macros/s/AKfycbzgSi6PDk9TGx7uExn2aynoqOX7Don-GxJi5ud4cfkI-IvKc3GDxQTL-reuxWyMjUw/exec';
+const RELAY_ID = params.get('match'), RELAY_PIN = params.get('pin') || '';
+const RELAY = !!RELAY_ID && !TEST;
+let relayGotData = false, relayBusy = false;
+async function pollRelay() {
+  if (relayBusy || holdLive) return;
+  relayBusy = true;
+  try {
+    const res = await fetch(RELAY_URL + '?matchId=' + encodeURIComponent(RELAY_ID) + '&pin=' + encodeURIComponent(RELAY_PIN), { redirect: 'follow' });
+    const json = await res.json();
+    if (json.error) { if (!relayGotData) message('Match not found, or the PIN is wrong.'); }
+    else if (json.data) {
+      const m = typeof json.data === 'string' ? JSON.parse(json.data) : json.data;
+      if (!m || !m.teams || !m.teams[m.battingTeam]) { if (!relayGotData) message('Waiting for the scorer to start…'); }
+      else { const snap = snapshotFromMatch(m); snap.updatedAt = 0; relayGotData = true; apply(snap); }
+    }
+  } catch (e) {
+    if (!relayGotData) message('Connecting to the match…');   // after first data, keep showing the last score
+  }
+  relayBusy = false;
+}
+
+// ---------- receiving snapshots ----------
+function show(raw) {
+  const r = normalise(raw);
+  if (!r.ok) { message(r.message); return; }
+  if (r.snap.updatedAt && Date.now() - r.snap.updatedAt > STALE_MS) { message('Waiting for scorebook…'); return; }
+  render(r.snap);
+}
+function apply(raw) {
+  if (holdLive || raw == null) return;
+  const key = typeof raw === 'string' ? raw : JSON.stringify(raw);
+  if (key === lastRaw) return;
+  lastRaw = key;
+  show(key);
+}
+
+// Three ways in, because browsers differ: a storage event, a BroadcastChannel,
+// and a once-a-second read as a safety net. Whichever arrives first wins; duplicates are skipped.
+function readStore() { try { return localStorage.getItem(KEY); } catch (e) { return null; } }
+if (RELAY) {
+  message('Connecting to the match…');
+  pollRelay();
+  setInterval(pollRelay, Math.max(3, parseInt(params.get('every'), 10) || 5) * 1000);
+} else {
+  window.addEventListener('storage', e => { if (e.key === KEY) apply(e.newValue); });
+  try { const ch = new BroadcastChannel(CHANNEL); ch.onmessage = e => apply(e.data); } catch (e) { /* not available */ }
+  setInterval(() => apply(readStore()), 1000);
+  apply(readStore());
+}
+
+// ---------- test panel ----------
+if (TEST) {
+  $('test').classList.remove('hidden');
+  const base = () => ({
+    schema: 1, updatedAt: Date.now(), status: 'live', innings: 1, maxOvers: 20,
+    battingTeam: 'Alpha', fieldingTeam: 'Beta', runs: 84, wickets: 3, balls: 87, target: null,
+    striker: { name: 'Vik', runs: 31, balls: 22 }, nonStriker: { name: 'Raj', runs: 12, balls: 9 },
+    bowler: { name: 'Sam', wickets: 1, runs: 22, balls: 21 },
+    thisOver: ['1', '•', '4'], freeHit: false, firstInnings: null, resultText: null
+  });
+  const samples = [
+    ['First innings, mid-over', () => base()],
+    ['Free hit after a no ball', () => Object.assign(base(), { thisOver: ['1', '2nb'], freeHit: true })],
+    ['Wicket just fell (flash)', () => Object.assign(base(), { wickets: 4, thisOver: ['•', '1', 'W'] })],
+    ['Chasing, 2nd innings', () => Object.assign(base(), { innings: 2, battingTeam: 'Beta', fieldingTeam: 'Alpha', runs: 96, wickets: 4, balls: 78, target: 143 })],
+    ['Over just completed', () => Object.assign(base(), { balls: 90, thisOver: ['1', '•', '4', '6', '2', '•'] })],
+    ['Very long names', () => Object.assign(base(), { battingTeam: 'Northern Suburbs Under-19 Development XI', striker: { name: 'Mohammed Abdul-Rahman Siddiqui', runs: 101, balls: 64 } })],
+    ['Worst case: chase, long names, 3-digit score', () => Object.assign(base(), { innings: 2, battingTeam: 'Northern Suburbs U19 XI', fieldingTeam: 'Beta', runs: 143, wickets: 10, balls: 112, target: 201, striker: { name: 'Mohammed Abdul-Rahman', runs: 101, balls: 64 }, nonStriker: { name: 'Christopher Wellington', runs: 12, balls: 9 }, bowler: { name: 'Bartholomew Okonkwo', wickets: 4, runs: 38, balls: 22 }, thisOver: ['1', '•', '4', '6', '2', '1wd'] })],
+    ['Innings break', () => Object.assign(base(), { status: 'innings_break', innings: 2, battingTeam: 'Beta', fieldingTeam: 'Alpha', runs: 0, wickets: 0, balls: 0, target: 143, striker: null, nonStriker: null, bowler: null, thisOver: [], firstInnings: { team: 'Alpha', runs: 142, wickets: 6, balls: 120 } })],
+    ['Match complete', () => Object.assign(base(), { status: 'complete', innings: 2, battingTeam: 'Beta', fieldingTeam: 'Alpha', runs: 143, wickets: 7, balls: 116, target: 143, resultText: 'Beta won by 3 wickets', firstInnings: { team: 'Alpha', runs: 142, wickets: 6, balls: 120 } })]
+  ];
+  samples.forEach(([label, make]) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.addEventListener('click', () => { holdLive = true; prev = null; show(make()); $('follow').textContent = 'Follow the scorebook (paused)'; });
+    $('samples').appendChild(b);
+  });
+  $('follow').addEventListener('click', () => { holdLive = false; lastRaw = null; $('follow').textContent = 'Follow the scorebook'; apply(readStore()); if (!readStore()) message('Waiting for scorebook…'); });
+  $('applyPaste').addEventListener('click', () => { holdLive = true; show($('paste').value); $('follow').textContent = 'Follow the scorebook (paused)'; });
+  setInterval(() => {
+    const raw = readStore(); let t = 'Scorebook feed: nothing received yet.';
+    if (raw) { try { const u = JSON.parse(raw).updatedAt; if (u) t = 'Scorebook feed: last update ' + Math.max(0, Math.round((Date.now() - u) / 1000)) + 's ago.'; } catch (e) { t = 'Scorebook feed: unreadable data.'; } }
+    $('feedInfo').textContent = t;
+  }, 1000);
+}
+})();
+</script>
+</body>
+</html>
